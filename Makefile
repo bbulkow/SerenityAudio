@@ -9,4 +9,4 @@ DEPS =
 %: %.c 
 	$(CC) -o $@ $^ $(CFLAGS)
 
-all: seplay
+all: saplay
