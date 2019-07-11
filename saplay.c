@@ -39,6 +39,7 @@
 #include <stdlib.h>
 #include <getopt.h>
 #include <locale.h>
+#include <stdbool.h>
 
 #include <sndfile.h>
 
@@ -56,7 +57,7 @@ typedef struct sa_soundplay {
   SNDFILE* sndfile;
   pa_sample_spec sample_spec; // is this valid c?  
   pa_channel_map channel_map;
-  int channel_map_set;
+  bool channel_map_set;
 	sf_count_t (*readf_function)(SNDFILE *_sndfile, void *ptr, sf_count_t frames);
 } sa_soundplay_t;
 
@@ -65,12 +66,18 @@ static pa_mainloop_api *g_mainloop_api = NULL;
 
 static char *g_client_name = NULL, *g_device = NULL;
 static pa_channel_map g_channel_map;
-static int g_channel_map_set = 0;
+static bool g_channel_map_set = false;
 
 static int g_verbose = 0;
 static pa_volume_t g_volume = PA_VOLUME_NORM;
 
-static sa_soundplay_t *player = NULL;
+static sa_soundplay_t *g_player = NULL;
+
+static pa_time_event *g_timer = NULL;
+
+// My timer will fire every 50ms
+//#define TIME_EVENT_USEC 50000
+#define TIME_EVENT_USEC 1000000
 
 /* a forward reference */
 static void sa_soundplay_free(sa_soundplay_t *);
@@ -343,6 +350,23 @@ static void sa_soundplay_free( sa_soundplay_t *splay ) {
   if (splay->sndfile) sf_close(splay->sndfile);
 
   free(splay);
+}
+
+/*
+** timer - this is called frequently, and where we decide to start and stop effects.
+** or loop them because they were completed or whatnot.
+*/
+
+/* pa_time_event_cb_t */
+static void
+sa_timer(pa_mainloop_api *a, pa_time_event *e, const struct timeval *tv, void *userdata)
+{
+	fprintf(stderr, "time event called: sec %d usec %d\n",tv->tv_sec, tv->tv_usec);
+
+	struct timeval now;
+	gettimeofday(&now, NULL);
+	pa_timeval_add(&now, TIME_EVENT_USEC);
+	a->time_restart(e,&now);
 } 
 
 static void help(const char *argv0) {
@@ -438,7 +462,7 @@ int main(int argc, char *argv[]) {
                     goto quit;
                 }
 
-                g_channel_map_set = 1;
+                g_channel_map_set = true;
                 break;
 
             default:
@@ -506,6 +530,15 @@ int main(int argc, char *argv[]) {
 
 		if (g_verbose) {
 			fprintf(stderr, "about to run mainloop\n");	
+		}
+
+		/* set up our timer */
+		struct timeval now;
+		gettimeofday(&now, NULL);
+		pa_timeval_add(&now, TIME_EVENT_USEC);	
+		g_timer = (* g_mainloop_api->time_new) (g_mainloop_api, &now, sa_timer, NULL);
+		if (g_timer == NULL) {
+			fprintf(stderr, "time_new failed!!!\n");
 		}
 
     /* Run the main loop - hangs here forever? */
