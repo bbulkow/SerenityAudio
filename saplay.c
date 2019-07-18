@@ -54,14 +54,25 @@ typedef struct sa_soundplay {
 	char *stream_name;
 	int verbose;
 	pa_volume_t volume;
-  SNDFILE* sndfile;
-  pa_sample_spec sample_spec; // is this valid c?  
-  pa_channel_map channel_map;
-  bool channel_map_set;
+
+  	SNDFILE* sndfile;
+  	pa_sample_spec sample_spec; // is this valid c?  
+  	pa_channel_map channel_map;
+  	bool channel_map_set;
+
 	sf_count_t (*readf_function)(SNDFILE *_sndfile, void *ptr, sf_count_t frames);
 } sa_soundplay_t;
 
+// for now, the single oneg
+static char *g_filename1 = "sounds/crickets-dawn.wav";  // this is not duped, it's from the inputs
+static char *g_filename2 = "sounds/bullfrog-2.wav";  // this is not duped, it's from the inputs
+static sa_soundplay_t *g_splay1 = NULL;
+static sa_soundplay_t *g_splay2 = NULL;
+
+
 static pa_context *g_context = NULL;
+static bool g_context_connected = false;
+
 static pa_mainloop_api *g_mainloop_api = NULL;
 
 static char *g_client_name = NULL, *g_device = NULL;
@@ -77,7 +88,7 @@ static pa_time_event *g_timer = NULL;
 
 // My timer will fire every 50ms
 //#define TIME_EVENT_USEC 50000
-#define TIME_EVENT_USEC 1000000
+#define TIME_EVENT_USEC 100000
 
 /* a forward reference */
 static void sa_soundplay_free(sa_soundplay_t *);
@@ -110,33 +121,32 @@ static void stream_drain_complete(pa_stream *s, int success, void *userdata) {
     pa_stream_unref(splay->stream);
     splay->stream = NULL;
 
-		// draining a context seems extreme? 
-    if (!(o = pa_context_drain(g_context, context_drain_complete, NULL)))
-        pa_context_disconnect(g_context);
-    else {
-        pa_operation_unref(o);
-
-        if (splay->verbose)
-            fprintf(stderr, "Draining connection to server.\n");
-    }
+	// Don't drain the context. We are just draining the stream. 
+    //if (!(o = pa_context_drain(g_context, context_drain_complete, NULL)))
+    //    pa_context_disconnect(g_context);
+    //else {
+    //    pa_operation_unref(o);
+    //    if (splay->verbose)
+    //        fprintf(stderr, "Draining connection to server.\n");
+    //}
 }
 
 /* This is called whenever new data may be written to the stream */
 static void stream_write_callback(pa_stream *s, size_t length, void *userdata) {
     
-		sa_soundplay_t *splay = (sa_soundplay_t *)userdata;
+	sa_soundplay_t *splay = (sa_soundplay_t *)userdata;
 
     sf_count_t bytes;
     void *data;
 
-		if (splay->verbose) fprintf(stderr,"stream write callback\n");
+	if (splay->verbose) fprintf(stderr,"stream write callback\n");
 
     assert(s && length);
 
     if (!splay->sndfile) {
-				if (splay->verbose) fprintf(stderr, "write callback with no sndfile\n");
+		if (splay->verbose) fprintf(stderr, "write callback with no sndfile\n");
         return;
-		}
+	}
 
     data = pa_xmalloc(length);
 
@@ -148,7 +158,7 @@ static void stream_write_callback(pa_stream *s, size_t length, void *userdata) {
 
     } else {
         bytes = sf_read_raw(splay->sndfile, data, (sf_count_t) length);
-		}
+	}
 
     if (bytes > 0)
         pa_stream_write(s, data, (size_t) bytes, pa_xfree, 0, PA_SEEK_RELATIVE);
@@ -195,10 +205,9 @@ static void stream_state_callback(pa_stream *s, void *userdata) {
 ** we really want something else
 */
 static void context_state_callback(pa_context *c, void *userdata) {
-		sa_soundplay_t *splay = (sa_soundplay_t *)userdata;
 
-		if (splay->verbose) {
-			fprintf(stderr, "context state callback\n");
+		if (g_verbose) {
+			fprintf(stderr, "context state callback, new state %d\n",pa_context_get_state(c) );
 		}
 
 		// just making sure???
@@ -211,21 +220,12 @@ static void context_state_callback(pa_context *c, void *userdata) {
             break;
 
         case PA_CONTEXT_READY: {
-            pa_cvolume cv;
 
-            assert(c && !splay->stream);
+            assert(c);
 
-            if (splay->verbose)
+            if (g_verbose)
                 fprintf(stderr, "Connection established.\n");
-
-            splay->stream = pa_stream_new(c, splay->stream_name, &splay->sample_spec, splay->channel_map_set ? &splay->channel_map : NULL);
-            assert(splay->stream);
-
-            pa_stream_set_state_callback(splay->stream, stream_state_callback, splay);
-            pa_stream_set_write_callback(splay->stream, stream_write_callback, splay);
-            pa_stream_connect_playback(splay->stream, g_device, NULL/*buffer_attr*/ , 0/*flags*/ , 
-								pa_cvolume_set(&cv, splay->sample_spec.channels, splay->volume), 
-								NULL/*sync stream*/);
+            g_context_connected = true;
 
             break;
         }
@@ -257,18 +257,18 @@ static void exit_signal_callback(pa_mainloop_api*m, pa_signal_event *e, int sig,
 
 static sa_soundplay_t * sa_play_file( char *filename ) {
 
-	  sa_soundplay_t *splay = malloc(sizeof(sa_soundplay_t));
-		memset(splay, 0, sizeof(sa_soundplay_t) );  // typically don't do this, do every field, but doing it this time
+	sa_soundplay_t *splay = malloc(sizeof(sa_soundplay_t));
+	memset(splay, 0, sizeof(sa_soundplay_t) );  // typically don't do this, do every field, but doing it this time
 
     SF_INFO sfinfo;
 
-  // initialize many things from the globals at this point
+  	// initialize many things from the globals at this point
     splay->channel_map_set = g_channel_map_set;
-		if (splay->channel_map_set) {
-			splay->channel_map = g_channel_map;
-		}
-		splay->volume = g_volume;
-		splay->verbose = g_verbose;
+	if (splay->channel_map_set) {
+		splay->channel_map = g_channel_map;
+	}
+	splay->volume = g_volume;
+	splay->verbose = g_verbose;
 
 	// open file
     memset(&sfinfo, 0, sizeof(sfinfo));
@@ -317,37 +317,65 @@ static sa_soundplay_t * sa_play_file( char *filename ) {
     if (!splay->stream_name) {
         const char *n, *sn;
 
-				// WARNING. No information about whether this function is returning
-			  // newly allocated memory that must be freed, or a pointer inside
-		    // the soundfile. Could thus be a memory leak
+		// WARNING. No information about whether this function is returning
+		// newly allocated memory that must be freed, or a pointer inside
+		// the soundfile. Could thus be a memory leak
         n = sf_get_string(splay->sndfile, SF_STR_TITLE);
 
         if (!n)
             n = filename;
-
-				// this returns a string that must be freed with pa_xfree()
+		// this returns a string that must be freed with pa_xfree()
         splay->stream_name = pa_locale_to_utf8(n);
         if (!sn)
             splay->stream_name = pa_utf8_filter(n);
 
     }
 
+    // better have had a context - don't know if it's connected though?
+    assert(g_context);
+
+    splay->stream = pa_stream_new(g_context, splay->stream_name, &splay->sample_spec, splay->channel_map_set ? &splay->channel_map : NULL);
+    assert(splay->stream);
+
+	pa_cvolume cv;
+
+    pa_stream_set_state_callback(splay->stream, stream_state_callback, splay);
+    pa_stream_set_write_callback(splay->stream, stream_write_callback, splay);
+    pa_stream_connect_playback(splay->stream, g_device, NULL/*buffer_attr*/ , 0/*flags*/ , 
+				pa_cvolume_set(&cv, splay->sample_spec.channels, splay->volume), 
+			NULL/*sync stream*/);
+
+
     if (splay->verbose) {
         char t[PA_SAMPLE_SPEC_SNPRINT_MAX];
         pa_sample_spec_snprint(t, sizeof(t), &splay->sample_spec);
-        fprintf(stderr, "Using sample spec '%s'\n", t);
+        fprintf(stderr, "created play file using sample spec '%s'\n", t);
 		}
 
-		return(splay);
+	return(splay);
+
+}
+
+// terminate a given sound
+static void sa_soundplay_terminate( sa_soundplay_t *splay) {
+	if (splay->stream) {
+		pa_stream_disconnect(splay->stream);
+		if (splay->verbose) {
+			fprintf(stderr, "terminating stream %s will get a callback for draining",splay->stream_name);
+		}
+	}
+	else {
+		fprintf(stderr, "soundplay_terminate but no stream in progress");
+	}
 
 }
 
 static void sa_soundplay_free( sa_soundplay_t *splay ) {
-  if (splay->stream) pa_stream_unref(splay->stream);
+	if (splay->stream) pa_stream_unref(splay->stream);
 	if (splay->stream_name) pa_xfree(splay->stream_name);
-  if (splay->sndfile) sf_close(splay->sndfile);
+	if (splay->sndfile) sf_close(splay->sndfile);
 
-  free(splay);
+	free(splay);
 }
 
 /*
@@ -355,11 +383,41 @@ static void sa_soundplay_free( sa_soundplay_t *splay ) {
 ** or loop them because they were completed or whatnot.
 */
 
+static struct timeval g_start_time;
+static bool g_started = false;
+
 /* pa_time_event_cb_t */
 static void
 sa_timer(pa_mainloop_api *a, pa_time_event *e, const struct timeval *tv, void *userdata)
 {
-	fprintf(stderr, "time event called: sec %d usec %d\n",tv->tv_sec, tv->tv_usec);
+	if (g_verbose) fprintf(stderr, "time event called: sec %d usec %d\n",tv->tv_sec, tv->tv_usec);
+
+	if ( (g_started == false) && (g_context_connected == true)) {
+
+		if (g_verbose) fprintf(stderr, "first time started\n");
+
+		// Create a player for each file
+		sa_soundplay_t *splay;
+		splay = sa_play_file( g_filename1 );
+		if (splay == NULL) {
+			fprintf(stderr, "play file1 failed\n");
+	       goto ABORT;
+		}
+		g_splay1 = splay; // for freeing only
+
+		splay = sa_play_file( g_filename2 );
+		if (splay == NULL) {
+			fprintf(stderr, "play file1 failed\n");
+	       goto ABORT;
+		}
+		g_splay2 = splay; // for freeing only
+
+
+		g_started = true;
+	}
+
+	// put the things you want to happen in here
+ABORT:	;
 
 	struct timeval now;
 	gettimeofday(&now, NULL);
@@ -393,14 +451,14 @@ int main(int argc, char *argv[]) {
     pa_mainloop* m = NULL;
     int ret = 1, r, c;
     char *bn = NULL;
-		char *server = NULL;
-		char *stream_name = NULL;
-    const char *filename;
+	char *server = NULL;
+	char *stream_name = NULL;
+
     SF_INFO sfinfo;
 
     static const struct option long_options[] = {
         {"device",      1, NULL, 'd'},
-				{"server",			1, NULL, 's'},
+		{"server",			1, NULL, 's'},
         {"client-name", 1, NULL, 'n'},
         {"stream-name", 1, NULL, ARG_STREAM_NAME},
         {"version",     0, NULL, ARG_VERSION},
@@ -468,8 +526,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    filename = optind < argc ? argv[optind] : "STDIN";
-
     if (!g_client_name) {
 				// must be freed with pa_xfree
         g_client_name = pa_locale_to_utf8(bn);
@@ -477,20 +533,9 @@ int main(int argc, char *argv[]) {
             g_client_name = pa_utf8_filter(bn);
     }
 
-		if (g_verbose) {
-			fprintf(stderr, "ready to play file %s\n",filename);	
-		}
-
-		// Create a player for the file in question
-		sa_soundplay_t *splay = sa_play_file( optind < argc ? argv[optind] : "STDIN" );
-		if (splay == NULL) {
-			fprintf(stderr, "play file failed\n");
-       goto quit;
-    }
-
-		if (g_verbose) {
-			fprintf(stderr, "about to set up mainloop\n");	
-		}
+	if (g_verbose) {
+		fprintf(stderr, "about to set up mainloop\n");	
+	}
 
     /* Set up a new main loop */
     if (!(m = pa_mainloop_new())) {
@@ -507,18 +552,19 @@ int main(int argc, char *argv[]) {
     signal(SIGPIPE, SIG_IGN);
 #endif
 
-		if (g_verbose) {
-			fprintf(stderr, "about to create new context \n");	
-		}
+	if (g_verbose) {
+		fprintf(stderr, "about to create new context \n");	
+	}
 
     /* Create a new connection context */
-		/* note: documentation says post 0.9, use with_proplist() and specify some defaults */
-    if (!(g_context = pa_context_new(g_mainloop_api, g_client_name))) {
+	/* note: documentation says post 0.9, use with_proplist() and specify some defaults */
+    g_context = pa_context_new(g_mainloop_api, g_client_name);
+    if (!g_context) {
         fprintf(stderr, "pa_context_new() failed.\n");
         goto quit;
     }
 
-    pa_context_set_state_callback(g_context, context_state_callback, splay);
+    pa_context_set_state_callback(g_context, context_state_callback, NULL);
 
     /* Connect the context */
     if (pa_context_connect(g_context, server, 0, NULL) < 0) {
@@ -526,18 +572,19 @@ int main(int argc, char *argv[]) {
         goto quit;
     }
 
-		if (g_verbose) {
-			fprintf(stderr, "about to run mainloop\n");	
-		}
+	if (g_verbose) {
+		fprintf(stderr, "about to run mainloop\n");	
+	}
 
-		/* set up our timer */
-		struct timeval now;
-		gettimeofday(&now, NULL);
-		pa_timeval_add(&now, TIME_EVENT_USEC);	
-		g_timer = (* g_mainloop_api->time_new) (g_mainloop_api, &now, sa_timer, NULL);
-		if (g_timer == NULL) {
-			fprintf(stderr, "time_new failed!!!\n");
-		}
+	/* set up our timer */
+	struct timeval now;
+	gettimeofday(&now, NULL);
+	pa_timeval_add(&now, TIME_EVENT_USEC);	
+	g_timer = (* g_mainloop_api->time_new) (g_mainloop_api, &now, sa_timer, NULL);
+	if (g_timer == NULL) {
+		fprintf(stderr, "time_new failed!!!\n");
+	}
+
 
     /* Run the main loop - hangs here forever? */
     if (pa_mainloop_run(m, &ret) < 0) {
@@ -546,9 +593,9 @@ int main(int argc, char *argv[]) {
     }
 
 quit:
-		if (g_verbose) {
-			fprintf(stderr, "quitting and cleaning up\n");	
-		}
+	if (g_verbose) {
+		fprintf(stderr, "quitting and cleaning up\n");	
+	}
 
     if (g_context)
         pa_context_unref(g_context);
@@ -557,7 +604,10 @@ quit:
         pa_signal_done();
         pa_mainloop_free(m);
     }
-		sa_soundplay_free(splay);
+	sa_soundplay_free(g_splay1);
+	g_splay1 = NULL;
+	sa_soundplay_free(g_splay2);
+	g_splay2 = NULL;
 
     pa_xfree(server);
     pa_xfree(g_device);
