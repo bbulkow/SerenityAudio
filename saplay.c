@@ -50,9 +50,12 @@
 // It will have a pointer to the file, filename, current buffer,
 // maybe even eventually things like a starttime
 typedef struct sa_soundplay {
-	pa_stream *stream;
+	pa_stream *stream; // gets reset to NULL when file is over
 	char *stream_name;
+	char *filename;
+
 	int verbose;
+
 	pa_volume_t volume;
 
   	SNDFILE* sndfile;
@@ -91,6 +94,7 @@ static pa_time_event *g_timer = NULL;
 #define TIME_EVENT_USEC 100000
 
 /* a forward reference */
+static void sa_soundplay_start(sa_soundplay_t *);
 static void sa_soundplay_free(sa_soundplay_t *);
 
 /* A shortcut for terminating the application */
@@ -115,20 +119,12 @@ static void stream_drain_complete(pa_stream *s, int success, void *userdata) {
     }
 
     if (splay->verbose)
-        fprintf(stderr, "Playback stream drained.\n");
+        fprintf(stderr, "Playback stream %s drained.\n",splay->stream_name );
 
     pa_stream_disconnect(splay->stream);
     pa_stream_unref(splay->stream);
     splay->stream = NULL;
 
-	// Don't drain the context. We are just draining the stream. 
-    //if (!(o = pa_context_drain(g_context, context_drain_complete, NULL)))
-    //    pa_context_disconnect(g_context);
-    //else {
-    //    pa_operation_unref(o);
-    //    if (splay->verbose)
-    //        fprintf(stderr, "Draining connection to server.\n");
-    //}
 }
 
 /* This is called whenever new data may be written to the stream */
@@ -139,12 +135,12 @@ static void stream_write_callback(pa_stream *s, size_t length, void *userdata) {
     sf_count_t bytes;
     void *data;
 
-	if (splay->verbose) fprintf(stderr,"stream write callback\n");
+	//if (splay->verbose) fprintf(stderr,"stream write callback\n");
 
     assert(s && length);
 
     if (!splay->sndfile) {
-		if (splay->verbose) fprintf(stderr, "write callback with no sndfile\n");
+		if (splay->verbose) fprintf(stderr, "write callback with no sndfile %s\n",splay->stream_name);
         return;
 	}
 
@@ -174,18 +170,20 @@ static void stream_write_callback(pa_stream *s, size_t length, void *userdata) {
 
 /* This routine is called whenever the stream state changes */
 static void stream_state_callback(pa_stream *s, void *userdata) {
-		sa_soundplay_t *splay = (sa_soundplay_t *)userdata;
+	sa_soundplay_t *splay = (sa_soundplay_t *)userdata;
 
-		if (splay->verbose) {
-			fprintf(stderr, "stream state callback\n");
-		}
+	if (splay->verbose) {
+		fprintf(stderr, "stream state callback: %d\n",pa_stream_get_state(s) );
+	}
 
-		// just making sure
+	// just making sure
     assert(s);
 
     switch (pa_stream_get_state(s)) {
         case PA_STREAM_CREATING:
+        	break;
         case PA_STREAM_TERMINATED:
+        	if (splay->verbose) fprintf(stderr, "stream %s terminated\n",splay->stream_name);
             break;
 
         case PA_STREAM_READY:
@@ -206,9 +204,9 @@ static void stream_state_callback(pa_stream *s, void *userdata) {
 */
 static void context_state_callback(pa_context *c, void *userdata) {
 
-		if (g_verbose) {
-			fprintf(stderr, "context state callback, new state %d\n",pa_context_get_state(c) );
-		}
+	if (g_verbose) {
+		fprintf(stderr, "context state callback, new state %d\n",pa_context_get_state(c) );
+	}
 
 		// just making sure???
     assert(c);
@@ -220,7 +218,6 @@ static void context_state_callback(pa_context *c, void *userdata) {
             break;
 
         case PA_CONTEXT_READY: {
-
             assert(c);
 
             if (g_verbose)
@@ -255,7 +252,7 @@ static void exit_signal_callback(pa_mainloop_api*m, pa_signal_event *e, int sig,
 // Filename of null means use stdin... or is always passed in?
 // filename is a static and not to be freed
 
-static sa_soundplay_t * sa_play_file( char *filename ) {
+static sa_soundplay_t * sa_soundplay_new( char *filename ) {
 
 	sa_soundplay_t *splay = malloc(sizeof(sa_soundplay_t));
 	memset(splay, 0, sizeof(sa_soundplay_t) );  // typically don't do this, do every field, but doing it this time
@@ -273,12 +270,10 @@ static sa_soundplay_t * sa_play_file( char *filename ) {
 	// open file
     memset(&sfinfo, 0, sizeof(sfinfo));
 
-    if (filename != NULL)
-        splay->sndfile = sf_open(filename, SFM_READ, &sfinfo);
-    else
-        splay->sndfile = sf_open_fd(STDIN_FILENO, SFM_READ, &sfinfo, 0);
+	splay->sndfile = sf_open(filename, SFM_READ, &sfinfo);
+    splay->filename = filename;
 
-		// Todo: have an error code
+	// Todo: have an error code
     if (!splay->sndfile) {
         fprintf(stderr, "Failed to open file '%s'\n", filename);
 				sa_soundplay_free(splay);
@@ -334,6 +329,34 @@ static sa_soundplay_t * sa_play_file( char *filename ) {
     // better have had a context - don't know if it's connected though?
     assert(g_context);
 
+    if (splay->verbose) {
+        char t[PA_SAMPLE_SPEC_SNPRINT_MAX];
+        pa_sample_spec_snprint(t, sizeof(t), &splay->sample_spec);
+        fprintf(stderr, "created play file using sample spec '%s'\n", t);
+		}
+
+	return(splay);
+
+}
+
+static void sa_soundplay_start( sa_soundplay_t *splay) {
+
+	if (splay->stream) {
+		fprintf(stderr, "Called start on already playing stream %s\n",splay->stream_name);
+		return;
+	}
+	if (splay->verbose) fprintf(stderr, "soundplay start: %s\n",splay->stream_name);
+
+	// have to open a new soundfile, but already have the key parameters
+	if (splay->sndfile==NULL) {
+
+    	SF_INFO sfinfo;
+	    memset(&sfinfo, 0, sizeof(sfinfo));
+
+        splay->sndfile = sf_open(splay->filename, SFM_READ, &sfinfo);
+        assert(splay->sndfile);
+    }
+
     splay->stream = pa_stream_new(g_context, splay->stream_name, &splay->sample_spec, splay->channel_map_set ? &splay->channel_map : NULL);
     assert(splay->stream);
 
@@ -344,15 +367,6 @@ static sa_soundplay_t * sa_play_file( char *filename ) {
     pa_stream_connect_playback(splay->stream, g_device, NULL/*buffer_attr*/ , 0/*flags*/ , 
 				pa_cvolume_set(&cv, splay->sample_spec.channels, splay->volume), 
 			NULL/*sync stream*/);
-
-
-    if (splay->verbose) {
-        char t[PA_SAMPLE_SPEC_SNPRINT_MAX];
-        pa_sample_spec_snprint(t, sizeof(t), &splay->sample_spec);
-        fprintf(stderr, "created play file using sample spec '%s'\n", t);
-		}
-
-	return(splay);
 
 }
 
@@ -392,28 +406,41 @@ sa_timer(pa_mainloop_api *a, pa_time_event *e, const struct timeval *tv, void *u
 {
 	if (g_verbose) fprintf(stderr, "time event called: sec %d usec %d\n",tv->tv_sec, tv->tv_usec);
 
+	// FIRST TIME AFTER CONTEXT IS CONNECTED
 	if ( (g_started == false) && (g_context_connected == true)) {
 
 		if (g_verbose) fprintf(stderr, "first time started\n");
 
 		// Create a player for each file
 		sa_soundplay_t *splay;
-		splay = sa_play_file( g_filename1 );
+		splay = sa_soundplay_new( g_filename1 );
 		if (splay == NULL) {
 			fprintf(stderr, "play file1 failed\n");
 	       goto ABORT;
 		}
+		sa_soundplay_start(splay);
 		g_splay1 = splay; // for freeing only
 
-		splay = sa_play_file( g_filename2 );
+		splay = sa_soundplay_new( g_filename2 );
 		if (splay == NULL) {
 			fprintf(stderr, "play file1 failed\n");
 	       goto ABORT;
 		}
+		sa_soundplay_start(splay);
 		g_splay2 = splay; // for freeing only
 
 
 		g_started = true;
+	}
+	else {
+		if (g_splay1->stream == NULL) {
+			sa_soundplay_start(g_splay1);
+		}
+
+		if (g_splay2->stream == NULL) {
+			sa_soundplay_start(g_splay2);
+		}
+
 	}
 
 	// put the things you want to happen in here
