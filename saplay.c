@@ -243,11 +243,9 @@ static void context_state_callback(pa_context *c, void *userdata) {
 
 /* UNIX signal to quit recieved */
 static void exit_signal_callback(pa_mainloop_api*m, pa_signal_event *e, int sig, void *userdata) {	
-		sa_soundplay_t *splay = (sa_soundplay_t *)userdata;
-    if (splay->verbose)
+    if (g_verbose)
         fprintf(stderr, "Got SIGINT, exiting.\n");
     quit(0);
-
 }
 
 
