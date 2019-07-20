@@ -66,12 +66,25 @@ typedef struct sa_soundplay {
 	sf_count_t (*readf_function)(SNDFILE *_sndfile, void *ptr, sf_count_t frames);
 } sa_soundplay_t;
 
+
+typedef struct sa_sink {
+    bool active;
+    int index;
+    // oh, I'm sure there are more things to map
+} sa_sink_t;
+
 // for now, the single oneg
-static char *g_filename1 = "sounds/crickets-dawn.wav";  // this is not duped, it's from the inputs
-static char *g_filename2 = "sounds/bullfrog-2.wav";  // this is not duped, it's from the inputs
+//static char *g_filename1 = "sounds/crickets-dawn.wav";  // this is not duped, it's from the inputs
+//static char *g_filename2 = "sounds/bullfrog-2.wav";  // this is not duped, it's from the inputs
+
+static char *g_filename1 = "sounds/flg_sample_3.wav";  // this is not duped, it's from the inputs
+static char *g_filename2 = "sounds/owl_01.wav";  // this is not duped, it's from the inputs
+
 static sa_soundplay_t *g_splay1 = NULL;
 static sa_soundplay_t *g_splay2 = NULL;
 
+#define MAX_SA_SINKS 6 // having 6 output audio devices is too much
+static sa_sink_t g_sa_sinks[MAX_SA_SINKS]; // null terminated array of pointers
 
 static pa_context *g_context = NULL;
 static bool g_context_connected = false;
@@ -93,9 +106,10 @@ static pa_time_event *g_timer = NULL;
 //#define TIME_EVENT_USEC 50000
 #define TIME_EVENT_USEC 100000
 
-/* a forward reference */
+/* forward references */
 static void sa_soundplay_start(sa_soundplay_t *);
 static void sa_soundplay_free(sa_soundplay_t *);
+static void sa_sinks_populate( pa_context *c );
 
 /* A shortcut for terminating the application */
 static void quit(int ret) {
@@ -411,6 +425,8 @@ sa_timer(pa_mainloop_api *a, pa_time_event *e, const struct timeval *tv, void *u
 
 		if (g_verbose) fprintf(stderr, "first time started\n");
 
+        sa_sinks_populate(g_context);
+
 		// Create a player for each file
 		sa_soundplay_t *splay;
 		splay = sa_soundplay_new( g_filename1 );
@@ -451,6 +467,46 @@ ABORT:	;
 	pa_timeval_add(&now, TIME_EVENT_USEC);
 	a->time_restart(e,&now);
 } 
+
+//
+// This populates the static structures with teh indexes. It does not start with 0 and 1,
+// the indexes ( which are the easiest way to talk about sinks ) increment as things are plugged
+// and unplugged. Thus we want to iterate the structure and find out what's currently around.
+// 
+
+static void sa_sink_list_cb(pa_context *c, const pa_sink_info *info, int eol, void *userdata) {
+
+    if (eol) return;
+
+    // find next inactive sink, set it
+    int i;
+    for (i=0;i<MAX_SA_SINKS;i++) {
+        if (g_sa_sinks[i].active == false) {
+            g_sa_sinks[i].active = true;
+            g_sa_sinks[i].index = info->index;
+            if (g_verbose) fprintf(stderr,"popuated index %d with sink index %d\n",i,info->index);
+            break;
+        }
+    }
+    if (i==MAX_SA_SINKS) {
+        fprintf(stderr," WARNING: large number of sinks ( more than MAX_SINKS ), some ignored\n");
+    }
+    return;
+
+}
+
+static void sa_sinks_populate( pa_context *c ) {
+
+    for (int i=0;i<MAX_SA_SINKS;i++) {
+        g_sa_sinks[i].active = false;
+    }
+
+    pa_operation *o = pa_context_get_sink_info_list ( c, sa_sink_list_cb, NULL /*userdata*/ );
+    // not sure about this! I think I'm OK to do it now. I won't get the operation complete
+    // callback, but I will get the callbacks associated with the API request
+    pa_operation_unref(o);
+
+}
 
 static void help(const char *argv0) {
 
