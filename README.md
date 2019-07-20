@@ -12,4 +12,9 @@ Adding "more" of a bug will add more-per-second
 First attempt is using PulseAudio. Rasperrian is at 'stretch', which is before 'buster'.
 The version of PulseAudio is 10.0, and so far works out of the box.
 
-Going to try some simple C programs first.
+# use
+Type 'make' to get the executable.
+
+Put the serenityaudio.service file in /etc/systemd/system
+sudo systemctl enable serenityaudio
+ 

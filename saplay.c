@@ -1,28 +1,37 @@
 /***
-  This file is part of PulseAudio.
+  SerenityAudio
 
-  Copyright 2004-2006 Lennart Poettering
-  Copyright 2006 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  This sound service, written to work with PulseAudio,
+  is an HTTP driven service which will response to REST / HTTP
+  commands from an interactive sculpture and will drive a set of speakers.
+  It is written intending to be run on a Raaspberry Pi.
 
-  PulseAudio is free software; you can redistribute it and/or modify
-  it under the terms of the GNU Lesser General Public License as published
-  by the Free Software Foundation; either version 2.1 of the License,
-  or (at your option) any later version.
-
-  PulseAudio is distributed in the hope that it will be useful, but
-  WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-  General Public License for more details.
-
-  You should have received a copy of the GNU Lesser General Public License
-  along with PulseAudio; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
-  USA.
+  Based on a PulseAudio example file by Lennart Poettering and Pierre Ossman.
+  However, very little remains of the original code.
 
 *
-* Modified by bbulkow 7/7/2019 to compile and run with PulseAudio 10.0
-* All modifications available under same license.
+* Written by Brian Bulkowski (bbulkow) 7/7/2019 to compile and run with PulseAudio 10.0
 *
+
+Copyright (c) 2019 Brian Bulkowski
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ***/
 
@@ -45,53 +54,7 @@
 
 #include <pulse/pulseaudio.h>
 
-#define MAX_SA_SINKS 6 // having 6 output audio devices is too much
-
-// This is the structure you fill in order to play a sound.
-// It will have a pointer to the file, filename, current buffer,
-// maybe even eventually things like a starttime
-
-
-typedef struct sa_soundplay {
-
-	pa_stream *stream; // gets reset to NULL when file is over
-
-	char *stream_name;
-	char *filename;
-    char *dev; // device
-
-	int verbose;
-
-	pa_volume_t volume;
-
-  	SNDFILE* sndfile;
-  	pa_sample_spec sample_spec; // is this valid c?  
-  	pa_channel_map channel_map;
-  	bool channel_map_set;
-
-	sf_count_t (*readf_function)(SNDFILE *_sndfile, void *ptr, sf_count_t frames);
-} sa_soundplay_t;
-
-
-typedef struct sa_sink {
-    bool active;
-    char *dev; // also known as "name" in some interfaces, malloc'd
-                // have to pass this to pa_stream_connect_playback
-    int index;
-    // oh, I'm sure there are more things to map
-} sa_sink_t;
-
-// the scape plays on all speakers attached to this pi
-typedef struct sa_soundscape {
-
-    int n_splays;
-
-    sa_soundplay_t *splays[MAX_SA_SINKS];
-
-} sa_soundscape_t;
-
-// useful type, a void function returning void
-typedef void (*callback_fn_t) (void);
+#include "saplay.h"
 
 // for now, the single oneg
 //static char *g_filename1 = "sounds/crickets-dawn.wav";  // this is not duped, it's from the inputs
