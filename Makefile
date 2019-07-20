@@ -10,3 +10,5 @@ DEPS =
 	$(CC) -o $@ $^ $(CFLAGS)
 
 all: saplay
+clean: 
+	rm saplay
