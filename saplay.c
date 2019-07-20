@@ -45,14 +45,20 @@
 
 #include <pulse/pulseaudio.h>
 
+#define MAX_SA_SINKS 6 // having 6 output audio devices is too much
 
 // This is the structure you fill in order to play a sound.
 // It will have a pointer to the file, filename, current buffer,
 // maybe even eventually things like a starttime
+
+
 typedef struct sa_soundplay {
+
 	pa_stream *stream; // gets reset to NULL when file is over
+
 	char *stream_name;
 	char *filename;
+    char *dev; // device
 
 	int verbose;
 
@@ -69,22 +75,35 @@ typedef struct sa_soundplay {
 
 typedef struct sa_sink {
     bool active;
+    char *dev; // also known as "name" in some interfaces, malloc'd
+                // have to pass this to pa_stream_connect_playback
     int index;
     // oh, I'm sure there are more things to map
 } sa_sink_t;
+
+// the scape plays on all speakers attached to this pi
+typedef struct sa_soundscape {
+
+    int n_splays;
+
+    sa_soundplay_t *splays[MAX_SA_SINKS];
+
+} sa_soundscape_t;
+
+// useful type, a void function returning void
+typedef void (*callback_fn_t) (void);
 
 // for now, the single oneg
 //static char *g_filename1 = "sounds/crickets-dawn.wav";  // this is not duped, it's from the inputs
 //static char *g_filename2 = "sounds/bullfrog-2.wav";  // this is not duped, it's from the inputs
 
-static char *g_filename1 = "sounds/flg_sample_3.wav";  // this is not duped, it's from the inputs
-static char *g_filename2 = "sounds/owl_01.wav";  // this is not duped, it's from the inputs
+static char *g_filename1 = "sounds/flg_sample_3.wav";  
+static char *g_filename2 = "sounds/owl_01.wav";  
 
-static sa_soundplay_t *g_splay1 = NULL;
-static sa_soundplay_t *g_splay2 = NULL;
+static sa_soundscape_t *g_scape1 = NULL;
+static sa_soundscape_t *g_scape2 = NULL;
 
-#define MAX_SA_SINKS 6 // having 6 output audio devices is too much
-static sa_sink_t g_sa_sinks[MAX_SA_SINKS]; // null terminated array of pointers
+static sa_sink_t g_sa_sinks[MAX_SA_SINKS] = {0}; // null terminated array of pointers
 
 static pa_context *g_context = NULL;
 static bool g_context_connected = false;
@@ -109,7 +128,8 @@ static pa_time_event *g_timer = NULL;
 /* forward references */
 static void sa_soundplay_start(sa_soundplay_t *);
 static void sa_soundplay_free(sa_soundplay_t *);
-static void sa_sinks_populate( pa_context *c );
+static sa_soundscape_t *sa_soundscape_new(char *filename);
+static void sa_sinks_populate( pa_context *c, callback_fn_t next_fn );
 
 /* A shortcut for terminating the application */
 static void quit(int ret) {
@@ -266,7 +286,7 @@ static void exit_signal_callback(pa_mainloop_api*m, pa_signal_event *e, int sig,
 // Filename of null means use stdin... or is always passed in?
 // filename is a static and not to be freed
 
-static sa_soundplay_t * sa_soundplay_new( char *filename ) {
+static sa_soundplay_t * sa_soundplay_new( char *filename, char *dev ) {
 
 	sa_soundplay_t *splay = malloc(sizeof(sa_soundplay_t));
 	memset(splay, 0, sizeof(sa_soundplay_t) );  // typically don't do this, do every field, but doing it this time
@@ -285,7 +305,8 @@ static sa_soundplay_t * sa_soundplay_new( char *filename ) {
     memset(&sfinfo, 0, sizeof(sfinfo));
 
 	splay->sndfile = sf_open(filename, SFM_READ, &sfinfo);
-    splay->filename = filename;
+    splay->filename = strdup(filename);
+    splay->dev = strdup(dev);
 
 	// Todo: have an error code
     if (!splay->sndfile) {
@@ -378,7 +399,7 @@ static void sa_soundplay_start( sa_soundplay_t *splay) {
 
     pa_stream_set_state_callback(splay->stream, stream_state_callback, splay);
     pa_stream_set_write_callback(splay->stream, stream_write_callback, splay);
-    pa_stream_connect_playback(splay->stream, g_device, NULL/*buffer_attr*/ , 0/*flags*/ , 
+    pa_stream_connect_playback(splay->stream, splay->dev, NULL/*buffer_attr*/ , 0/*flags*/ , 
 				pa_cvolume_set(&cv, splay->sample_spec.channels, splay->volume), 
 			NULL/*sync stream*/);
 
@@ -402,9 +423,86 @@ static void sa_soundplay_free( sa_soundplay_t *splay ) {
 	if (splay->stream) pa_stream_unref(splay->stream);
 	if (splay->stream_name) pa_xfree(splay->stream_name);
 	if (splay->sndfile) sf_close(splay->sndfile);
+    if (splay->dev) free(splay->dev);
+    if (splay->filename) free(splay->filename);
 
 	free(splay);
 }
+
+/*
+** sa_soundscape
+** a "soundscape" is made of all the speakers playing a particular loop.
+*/
+
+// Init all the soundscapes, after the global context is created
+// loaded from the startup default config or something?
+static void sa_soundscape_start(void) {
+
+    if (g_verbose) fprintf(stderr, "sa_soundscape_start: \n");
+
+    // Create a player for each file
+    sa_soundscape_t *scape;
+    scape = sa_soundscape_new( g_filename1 );
+    if (scape == NULL) {
+        fprintf(stderr, "scape file1 failed FATAL\n");
+    } else {
+        g_scape1 = scape; // for freeing only
+    }
+
+    scape = sa_soundscape_new( g_filename2 );
+    if (scape == NULL) {
+        fprintf(stderr, "scape file2 failed\n");
+    }
+    else {
+        g_scape2 = scape; // for freeing only
+    }
+
+}
+
+static sa_soundscape_t *sa_soundscape_new(char *filename) {
+
+    sa_soundscape_t *scape = malloc(sizeof(sa_soundscape_t));
+    memset( scape, 0, sizeof(sa_soundscape_t) );
+
+    if (g_verbose) fprintf(stderr, "new soundscape: %s\n",filename);
+
+
+    for(int i=0 ; i<MAX_SA_SINKS ; i++) {
+        if (g_sa_sinks[i].active) {
+            if (g_verbose) fprintf(stderr, "new soundscape: new soundplay: sink %s\n",g_sa_sinks[i].dev);
+            scape->splays[i] = sa_soundplay_new(filename, g_sa_sinks[i].dev);
+            sa_soundplay_start(scape->splays[i]);
+            scape->n_splays++;
+        }
+    }
+
+    return(scape);
+
+}
+
+static void sa_soundscape_timer(sa_soundscape_t *scape) {
+
+    if (g_verbose) fprintf(stderr, "soundscape timer: scape %p\n",scape);
+
+    for (int i=0 ; i<scape->n_splays ; i++) {
+        if (scape->splays[i]->stream == 0) {
+            sa_soundplay_start(scape->splays[i]);
+        }
+    }
+
+}
+
+static void sa_soundscape_free( sa_soundscape_t *scape) {
+
+    for (int i=0;i<scape->n_splays;i++) {
+        if (scape->splays[i]) {
+            sa_soundplay_free(scape->splays[i]);
+        }
+    }
+
+    free(scape);
+}
+
 
 /*
 ** timer - this is called frequently, and where we decide to start and stop effects.
@@ -425,38 +523,32 @@ sa_timer(pa_mainloop_api *a, pa_time_event *e, const struct timeval *tv, void *u
 
 		if (g_verbose) fprintf(stderr, "first time started\n");
 
-        sa_sinks_populate(g_context);
+        // this will call the sinks to populate, and when that's done, call the
+        // next function
+        sa_sinks_populate(g_context, sa_soundscape_start);
 
 		// Create a player for each file
-		sa_soundplay_t *splay;
-		splay = sa_soundplay_new( g_filename1 );
-		if (splay == NULL) {
-			fprintf(stderr, "play file1 failed\n");
-	       goto ABORT;
+		sa_soundscape_t *scape;
+		scape = sa_soundscape_new( g_filename1 );
+		if (scape == NULL) {
+            fprintf(stderr, "scape file1 failed\n");
+            goto ABORT;
 		}
-		sa_soundplay_start(splay);
-		g_splay1 = splay; // for freeing only
+		g_scape1 = scape; // for freeing only
 
-		splay = sa_soundplay_new( g_filename2 );
-		if (splay == NULL) {
-			fprintf(stderr, "play file1 failed\n");
+		scape = sa_soundscape_new( g_filename2 );
+		if (scape == NULL) {
+			fprintf(stderr, "scape file2 failed\n");
 	       goto ABORT;
 		}
-		sa_soundplay_start(splay);
-		g_splay2 = splay; // for freeing only
+		g_scape2 = scape; // for freeing only
 
 
 		g_started = true;
 	}
 	else {
-		if (g_splay1->stream == NULL) {
-			sa_soundplay_start(g_splay1);
-		}
-
-		if (g_splay2->stream == NULL) {
-			sa_soundplay_start(g_splay2);
-		}
-
+        sa_soundscape_timer(g_scape1);
+        sa_soundscape_timer(g_scape2);
 	}
 
 	// put the things you want to happen in here
@@ -478,32 +570,45 @@ static void sa_sink_list_cb(pa_context *c, const pa_sink_info *info, int eol, vo
 
     if (eol) return;
 
+    callback_fn_t next_fn = (callback_fn_t) userdata;
+
+    if (g_verbose) fprintf(stderr, "sink list callback:\n");
+
     // find next inactive sink, set it
     int i;
     for (i=0;i<MAX_SA_SINKS;i++) {
         if (g_sa_sinks[i].active == false) {
             g_sa_sinks[i].active = true;
             g_sa_sinks[i].index = info->index;
-            if (g_verbose) fprintf(stderr,"popuated index %d with sink index %d\n",i,info->index);
+            g_sa_sinks[i].dev = strdup(info->name);
+            if (g_verbose) fprintf(stderr,"popuated index %d with idx %d dev %s\n",i,info->index,info->name);
             break;
         }
     }
     if (i==MAX_SA_SINKS) {
         fprintf(stderr," WARNING: large number of sinks ( more than MAX_SINKS ), some ignored\n");
     }
+
+    if (next_fn) {
+        next_fn();
+    }
+
     return;
 
 }
 
-static void sa_sinks_populate( pa_context *c ) {
+static void sa_sinks_populate( pa_context *c, callback_fn_t next_fn ) {
 
+    // cleanup array
     for (int i=0;i<MAX_SA_SINKS;i++) {
+        if (g_sa_sinks[i].active && g_sa_sinks[i].dev) {
+            free(g_sa_sinks[i].dev);
+            g_sa_sinks[i].dev = 0;
+        }
         g_sa_sinks[i].active = false;
     }
 
-    pa_operation *o = pa_context_get_sink_info_list ( c, sa_sink_list_cb, NULL /*userdata*/ );
-    // not sure about this! I think I'm OK to do it now. I won't get the operation complete
-    // callback, but I will get the callbacks associated with the API request
+    pa_operation *o = pa_context_get_sink_info_list ( c, sa_sink_list_cb, next_fn /*userdata*/ );
     pa_operation_unref(o);
 
 }
@@ -687,10 +792,10 @@ quit:
         pa_signal_done();
         pa_mainloop_free(m);
     }
-	sa_soundplay_free(g_splay1);
-	g_splay1 = NULL;
-	sa_soundplay_free(g_splay2);
-	g_splay2 = NULL;
+	sa_soundscape_free(g_scape1);
+	g_scape1 = NULL;
+	sa_soundscape_free(g_scape2);
+	g_scape2 = NULL;
 
     pa_xfree(server);
     pa_xfree(g_device);
