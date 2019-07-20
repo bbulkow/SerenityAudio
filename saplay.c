@@ -50,8 +50,13 @@ SOFTWARE.
 #include <locale.h>
 #include <stdbool.h>
 
+// Jannson for parsing Json
+#include <jansson.h>
+
+// external library which understands different formats
 #include <sndfile.h>
 
+// pulseaudio library which talks to the server
 #include <pulse/pulseaudio.h>
 
 #include "saplay.h"
@@ -62,6 +67,10 @@ SOFTWARE.
 
 static char *g_filename1 = "sounds/flg_sample_3.wav";  
 static char *g_filename2 = "sounds/owl_01.wav";  
+
+static char *g_directory = NULL; // loaded from the config file
+
+static char *g_config_filename = "config.json";
 
 static sa_soundscape_t *g_scape1 = NULL;
 static sa_soundscape_t *g_scape2 = NULL;
@@ -74,13 +83,12 @@ static bool g_context_connected = false;
 static pa_mainloop_api *g_mainloop_api = NULL;
 
 static char *g_client_name = NULL, *g_device = NULL;
+
 static pa_channel_map g_channel_map;
 static bool g_channel_map_set = false;
 
 static int g_verbose = 0;
 static pa_volume_t g_volume = PA_VOLUME_NORM;
-
-static sa_soundplay_t *g_player = NULL;
 
 static pa_time_event *g_timer = NULL;
 
@@ -576,6 +584,45 @@ static void sa_sinks_populate( pa_context *c, callback_fn_t next_fn ) {
 
 }
 
+//
+// Config
+//
+
+static bool config_load(const char *filename) {
+
+    // nice to have for debugging
+    json_error_t    js_err;
+
+    json_auto_t *js_root = json_load_file(filename, JSON_DECODE_ANY | JSON_DISABLE_EOF_CHECK, &js_err);
+
+    if (js_root == NULL) {
+        fprintf(stderr, "JSON config parse failed on %s\n",filename);
+        fprintf(stderr, "position: (%d,%d)  %s\n",js_err.line,js_err.column,js_err.text);
+        return(false);
+    }
+
+    json_auto_t *js_dir = json_object_get(js_root, "directory");
+    if (!js_dir) {
+        fprintf(stderr, "dirctory not found, using null string");
+        g_directory = strdup("");
+    }
+    else {
+        const char *dir_s = json_string_value(js_dir);
+        if (!dir_s) 
+            g_directory = strdup("");
+        else
+            g_directory = strdup(dir_s);
+    }
+
+    if (g_verbose) fprintf(stderr, "json file loaded successfully\n");
+    return(true);
+
+quit:
+    return(false);
+
+}
+
+
 static void help(const char *argv0) {
 
     printf("%s [options] [FILE]\n\n"
@@ -583,7 +630,6 @@ static void help(const char *argv0) {
            "      --version                         Show version\n\n"
            "  -v, --verbose                         Enable verbose operation\n\n"
            "  -s, --server                          The name of the server to connect to\n"
-           "  -d, --device=DEVICE                   The name of the sink to connect to\n"
            "  -n, --client-name=NAME                How to call this client on the server\n"
            "      --stream-name=NAME                How to call this stream on the server\n"
            "      --volume=VOLUME                   Specify the initial (linear) volume in range 0...65536\n"
@@ -608,7 +654,6 @@ int main(int argc, char *argv[]) {
     SF_INFO sfinfo;
 
     static const struct option long_options[] = {
-        {"device",      1, NULL, 'd'},
 		{"server",			1, NULL, 's'},
         {"client-name", 1, NULL, 'n'},
         {"stream-name", 1, NULL, ARG_STREAM_NAME},
@@ -633,15 +678,10 @@ int main(int argc, char *argv[]) {
                 ret = 0;
                 goto quit;
 
-            case 'd':
-                pa_xfree(g_device);
-                g_device = pa_xstrdup(optarg);
-                break;
-
-						case 's':
-							  pa_xfree(server);
-								server = pa_xstrdup(optarg);
-								break;
+			case 's':
+				  pa_xfree(server);
+					server = pa_xstrdup(optarg);
+					break;
 
             case 'n':
                 pa_xfree(g_client_name);
@@ -682,6 +722,10 @@ int main(int argc, char *argv[]) {
         g_client_name = pa_locale_to_utf8(bn);
         if (!g_client_name)
             g_client_name = pa_utf8_filter(bn);
+    }
+
+    if (! config_load(g_config_filename)) {
+        goto quit;
     }
 
 	if (g_verbose) {
@@ -751,14 +795,15 @@ quit:
     if (g_context)
         pa_context_unref(g_context);
 
+    if (g_directory)
+        free(g_directory);
+
     if (m) {
         pa_signal_done();
         pa_mainloop_free(m);
     }
-	sa_soundscape_free(g_scape1);
-	g_scape1 = NULL;
-	sa_soundscape_free(g_scape2);
-	g_scape2 = NULL;
+	if (g_scape1) { sa_soundscape_free(g_scape1); g_scape1 = NULL; }
+    if (g_scape2) { sa_soundscape_free(g_scape2); g_scape2 = NULL; }	
 
     pa_xfree(server);
     pa_xfree(g_device);

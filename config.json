@@ -7,7 +7,7 @@
         {
             "name": "PergolaLeftFront",
             "usb_bus": "somethingsomething"
-        },
+        }
     ],
     "directory": "/home/pi/SerenityAudio/sounds/flg",
     "ambients": [
@@ -22,7 +22,7 @@
         {
             "name": "ambient",
             "file": "ambient.wav"
-        },
+        }
     ],
     "soundscapes": [
         {
@@ -73,7 +73,6 @@
             "file-2": "birds_evening.wav",
             "file-3": "birds_evening.wav"
         }
-
 
     ]
 }

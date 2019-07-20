@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS =  -O3 -march=native -std=gnu11 -I. -lpulse -lsndfile
+CFLAGS =  -O3 -march=native -std=gnu11 -I. -lpulse -lsndfile -ljansson
 DEPS = 
 
 %.o: %.c $(DEPS)
