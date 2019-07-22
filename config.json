@@ -22,6 +22,14 @@
         {
             "name": "ambient",
             "file": "ambient.wav"
+        },
+        {
+            "name": "ambient01",
+            "file": "../ambient_01.wav"
+        },
+        {
+            "name": "flg sample",
+            "file": "../flg_sample_3.wav"
         }
     ],
     "soundscapes": [
