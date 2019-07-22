@@ -92,4 +92,6 @@ extern void sa_sinks_populate( pa_context *c, callback_fn_t next_fn );
 extern bool sa_http_start(void); // false if fail
 extern void sa_http_terminate(void);
 
+extern int g_verbose;
+
 #endif // _SAPLAY_H_

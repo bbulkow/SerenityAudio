@@ -38,12 +38,11 @@ SOFTWARE.
 #include <stdio.h>
 #include <string.h>
 
-
 #include <microhttpd.h>
 
 #include "saplay.h"
 
-#define HTTP_PORT 80
+#define HTTP_PORT 8000
 
 int http_request_handler (void *cls, struct MHD_Connection *connection,
                           const char *url,
@@ -54,6 +53,8 @@ int http_request_handler (void *cls, struct MHD_Connection *connection,
 	const char *page  = "<html><body>Hello, browser!</body></html>";
 	struct MHD_Response *response;
 	int ret;
+
+  if (g_verbose) fprintf(stderr, "http request handler called\n");
 
 	response = MHD_create_response_from_buffer (strlen (page),
 	                                        (void*) page, MHD_RESPMEM_PERSISTENT);
@@ -68,13 +69,18 @@ static struct MHD_Daemon *g_mhd_daemon;
 
 bool sa_http_start(void) {
 
+  if (g_verbose) fprintf(stderr,"starting HTTP server\n");
+
   // this kind of start returns immediately and then there is a thread
   // spawned to do epoll
- 	g_mhd_daemon = MHD_start_daemon (MHD_USE_EPOLL, 
+ 	g_mhd_daemon = MHD_start_daemon (MHD_USE_EPOLL_INTERNALLY, 
   				HTTP_PORT, NULL, NULL,
                 &http_request_handler, NULL, MHD_OPTION_END);
 
- 	if (NULL == g_mhd_daemon) return false;
+ 	if (NULL == g_mhd_daemon) {
+    fprintf(stderr, "could not start HTTP server\n");
+    return false;
+  }
 
 	return(true);
 }

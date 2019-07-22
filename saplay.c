@@ -56,6 +56,8 @@ SOFTWARE.
 
 #include "saplay.h"
 
+int g_verbose = 0;
+
 // for now, the single oneg
 //static char *g_filename1 = "sounds/crickets-dawn.wav";  // this is not duped, it's from the inputs
 //static char *g_filename2 = "sounds/bullfrog-2.wav";  // this is not duped, it's from the inputs
@@ -82,7 +84,6 @@ static char *g_client_name = NULL, *g_device = NULL;
 static pa_channel_map g_channel_map;
 static bool g_channel_map_set = false;
 
-static int g_verbose = 0;
 static pa_volume_t g_volume = PA_VOLUME_NORM;
 
 static pa_time_event *g_timer = NULL;
@@ -432,6 +433,7 @@ sa_soundscape_t *sa_soundscape_new(char *filename) {
         if (g_sa_sinks[i].active) {
             if (g_verbose) fprintf(stderr, "new soundscape: new soundplay: sink %s\n",g_sa_sinks[i].dev);
             scape->splays[i] = sa_soundplay_new(filename, g_sa_sinks[i].dev);
+            if (!scape->splays[i]) return(NULL);
             sa_soundplay_start(scape->splays[i]);
             scape->n_splays++;
         }
@@ -723,7 +725,7 @@ int main(int argc, char *argv[]) {
 	}
 
     /* set up the http server */
-    if ( ! sa_http_start ) {
+    if ( ! sa_http_start() ) {
         fprintf(stderr, "could not start HTTP server\n");
         goto quit;
     }
