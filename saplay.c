@@ -53,11 +53,6 @@ SOFTWARE.
 // Jannson for parsing Json
 #include <jansson.h>
 
-// external library which understands different formats
-#include <sndfile.h>
-
-// pulseaudio library which talks to the server
-#include <pulse/pulseaudio.h>
 
 #include "saplay.h"
 
@@ -96,11 +91,6 @@ static pa_time_event *g_timer = NULL;
 //#define TIME_EVENT_USEC 50000
 #define TIME_EVENT_USEC 100000
 
-/* forward references */
-static void sa_soundplay_start(sa_soundplay_t *);
-static void sa_soundplay_free(sa_soundplay_t *);
-static sa_soundscape_t *sa_soundscape_new(char *filename);
-static void sa_sinks_populate( pa_context *c, callback_fn_t next_fn );
 
 /* A shortcut for terminating the application */
 static void quit(int ret) {
@@ -345,7 +335,7 @@ static sa_soundplay_t * sa_soundplay_new( char *filename, char *dev ) {
 
 }
 
-static void sa_soundplay_start( sa_soundplay_t *splay) {
+void sa_soundplay_start( sa_soundplay_t *splay) {
 
 	if (splay->stream) {
 		fprintf(stderr, "Called start on already playing stream %s\n",splay->stream_name);
@@ -377,7 +367,7 @@ static void sa_soundplay_start( sa_soundplay_t *splay) {
 }
 
 // terminate a given sound
-static void sa_soundplay_terminate( sa_soundplay_t *splay) {
+void sa_soundplay_terminate( sa_soundplay_t *splay) {
 	if (splay->stream) {
 		pa_stream_disconnect(splay->stream);
 		if (splay->verbose) {
@@ -390,7 +380,7 @@ static void sa_soundplay_terminate( sa_soundplay_t *splay) {
 
 }
 
-static void sa_soundplay_free( sa_soundplay_t *splay ) {
+void sa_soundplay_free( sa_soundplay_t *splay ) {
 	if (splay->stream) pa_stream_unref(splay->stream);
 	if (splay->stream_name) pa_xfree(splay->stream_name);
 	if (splay->sndfile) sf_close(splay->sndfile);
@@ -407,7 +397,7 @@ static void sa_soundplay_free( sa_soundplay_t *splay ) {
 
 // Init all the soundscapes, after the global context is created
 // loaded from the startup default config or something?
-static void sa_soundscape_start(void) {
+void sa_soundscape_start(void) {
 
     if (g_verbose) fprintf(stderr, "sa_soundscape_start: \n");
 
@@ -430,7 +420,7 @@ static void sa_soundscape_start(void) {
 
 }
 
-static sa_soundscape_t *sa_soundscape_new(char *filename) {
+sa_soundscape_t *sa_soundscape_new(char *filename) {
 
     sa_soundscape_t *scape = malloc(sizeof(sa_soundscape_t));
     memset( scape, 0, sizeof(sa_soundscape_t) );
@@ -451,7 +441,7 @@ static sa_soundscape_t *sa_soundscape_new(char *filename) {
 
 }
 
-static void sa_soundscape_timer(sa_soundscape_t *scape) {
+void sa_soundscape_timer(sa_soundscape_t *scape) {
 
     if (g_verbose) fprintf(stderr, "soundscape timer: scape %p\n",scape);
 
@@ -568,7 +558,7 @@ static void sa_sink_list_cb(pa_context *c, const pa_sink_info *info, int eol, vo
 
 }
 
-static void sa_sinks_populate( pa_context *c, callback_fn_t next_fn ) {
+void sa_sinks_populate( pa_context *c, callback_fn_t next_fn ) {
 
     // cleanup array
     for (int i=0;i<MAX_SA_SINKS;i++) {
@@ -732,6 +722,12 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "about to set up mainloop\n");	
 	}
 
+    /* set up the http server */
+    if ( ! sa_http_start ) {
+        fprintf(stderr, "could not start HTTP server\n");
+        goto quit;
+    }
+
     /* Set up a new main loop */
     if (!(m = pa_mainloop_new())) {
         fprintf(stderr, "pa_mainloop_new() failed.\n");
@@ -791,6 +787,8 @@ quit:
 	if (g_verbose) {
 		fprintf(stderr, "quitting and cleaning up\n");	
 	}
+
+    sa_http_terminate();
 
     if (g_context)
         pa_context_unref(g_context);

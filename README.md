@@ -12,6 +12,12 @@ Adding "more" of a bug will add more-per-second
 First attempt is using PulseAudio. Rasperrian is at 'stretch', which is before 'buster'.
 The version of PulseAudio is 10.0, and so far works out of the box.
 
+# Dependancies
+jansson - sudo apt install libjansson-dev
+pulseaudio - sudo apt install libpulse-dev
+soundfile - sudo apt install libsndfile1-dev
+microhttpd - sudo apt install libmicrohttpd-dev
+
 # use
 Type 'make' to get the executable.
 

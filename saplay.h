@@ -20,6 +20,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#ifndef _SAPLAY_H_
+#define _SAPLAY_H_
+
+#include <stdint.h>
+#include <stdbool.h>
+
+// external library which understands different formats
+#include <sndfile.h>
+
+#include <pulse/pulseaudio.h>
+
 #define MAX_SA_SINKS 6 // having 6 sound inputs seems very reasonable
 
 typedef struct sa_soundplay {
@@ -34,10 +45,10 @@ typedef struct sa_soundplay {
 
 	pa_volume_t volume;
 
-  	SNDFILE* sndfile;
-  	pa_sample_spec sample_spec; // is this valid c?  
-  	pa_channel_map channel_map;
-  	bool channel_map_set;
+  SNDFILE* sndfile;
+  pa_sample_spec sample_spec; // is this valid c?  
+  pa_channel_map channel_map;
+  bool channel_map_set;
 
 	sf_count_t (*readf_function)(SNDFILE *_sndfile, void *ptr, sf_count_t frames);
 } sa_soundplay_t;
@@ -60,5 +71,25 @@ typedef struct sa_soundscape {
 
 } sa_soundscape_t;
 
+typedef struct sa_sound_ambient {
+
+  
+
+} sa_sound_ambient_t;
+
 // useful type, a void function returning void
 typedef void (*callback_fn_t) (void);
+
+/* Forward References */
+
+extern void sa_soundplay_start(sa_soundplay_t *);
+extern void sa_soundplay_free(sa_soundplay_t *);
+
+extern sa_soundscape_t *sa_soundscape_new(char *filename);
+
+extern void sa_sinks_populate( pa_context *c, callback_fn_t next_fn );
+
+extern bool sa_http_start(void); // false if fail
+extern void sa_http_terminate(void);
+
+#endif // _SAPLAY_H_
